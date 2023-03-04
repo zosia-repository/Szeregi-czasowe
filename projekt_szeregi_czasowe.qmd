@@ -1,0 +1,256 @@
+---
+title: Opracowanie zestawu danych miesięcznych stężeń CO2
+format: 
+  html:
+    theme: cosmo
+    self-contained-math: true
+    self-contained: true
+editor: visual
+---
+
+Tematem naszego projektu będzie opracowanie "Zestawu danych miesięcznych stężeń CO2". 
+
+Ten zestaw danych zawiera wybrane średnie miesięczne stężenia CO2 w Obserwatorium Mauna Loa w latach 1974-1987. Stężenia CO2 mierzono ciągłym analizatorem podczerwieni działu Geofizycznego Monitoringu Zmian Klimatu Laboratorium Zasobów Powietrza NOAA. Wybór miał na celu przybliżenie „warunków tła”. 
+
+Ten zestaw danych otrzymano od Jima Elkinsa z NOAA w 1988 roku.
+
+Każda linia zawiera stężenie CO2 (stosunek zmieszania w suchym powietrzu, wyrażony w skali ułamków molowych WMO X85, utrzymywanej przez "Scripps Institution of Oceanography"). Ponadto zawiera rok, miesiąc i wartość liczbową dla połączonego miesiąca i roku. 
+
+```{r}
+library(rio)
+dane <- import("dane.txt", format = "txt")
+dane <- dane[,-3]
+```
+
+```{r}
+miesiac <- c("styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzien")
+
+lata <- NULL
+
+for(i in 1:14){
+  lata <- c(lata, rep(1973+i, 12))
+}
+```
+
+```{r}
+colnames(dane) <- c("wartość", "lata", "miesiąc")
+```
+
+## Analiza danych za pomocą podstawowych statystyk: 
+
+```{r}
+summary(dane[1])
+```
+
+Z zestwienia widać, że najmniejsze stężenie CO2 wynosi 327.3, a największe 345.9. 
+
+Ważne powiedzieć, że obecnie w naturalnym środowisku stężenie CO2 w powietrzu zwykle nie przekracza 400 ppm (0,04 %) objętości i takie stężenie jest najkorzystniejsze dla oddychającego człowieka.
+
+Za próg bezpieczeństwa podczas 8-godzinnego dnia pracy przyjmuje się stężenie CO2 równe 5000 ppm. Jest to jednak próg bezpieczeństwa, a nie komfortu i wpływu na zdrowie. Narzekania na jakość powietrza z reguły pojawiają się w sytuacji w której stężenie CO2 przekracza 600-800 ppm, a nasilają powyżej 1000 ppm.
+
+Dlatego tak ważna analiza CO2 w naturalnym średowisku i również w powieszczeniach. 
+
+## Wizualizacja 
+
+```{r, message=FALSE}
+library(tidyverse)
+dane %>% 
+  ggplot(aes(x = lata, y = wartość, col = miesiąc))+
+  geom_point()
+```
+
+Widzimy zależnośc liniowową dodatnią między stężeniem CO2 i rokiem mierzenia stężenia. 
+
+Teraz przechodzimy do wykrycia sezonowości, w tym celu dokonamy przekształcenia ramki danych.
+
+```{r, warning = FALSE}
+dane2 <- import("dane2.txt", type = "txt")
+```
+
+```{r}
+miesiac <- c("styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzien")
+
+rownames(dane2) <- paste(rep(miesiac, 9), dane2[,3])
+
+dane2 <- dane2[1]
+colnames(dane2) <- "wartość"
+```
+
+Spróbujemy wykryć sezonowość za pomocą wykresów: 
+```{r}
+plot(dane2$wartość, col = 5, type = "l", main = "Poziom stężenia CO2 w latach 1975-1987", lwd = 2.5)
+```
+Możemy przepuszcać, że wahanie sezonowe mamy typu "addytewnego", nie będziemy tego wnioskować na podstawie jednego wykresu. 
+
+W środowisku R dostępne są także funkcje dotyczące filtrowania szeregów czasowych. Zajmiemy się tym w następnej kolejności.
+
+Ponieważ mamy dane miesięczne, zaleca się stosowanie wspólczynnika `lambda` = 14400.
+```{r}
+f <- FRAPO::trdhp(dane2$wartość, lambda=14400)
+plot(dane2$wartość, col = 5, type = "l", main = "", lwd = 2.5)
+lines(f,col="YellowGreen", lwd = 2.3)
+```
+
+## Identyfikacja trendu i sezonowości
+
+### Autokorelacja: 
+
+```{r}
+szereg <- ts(dane2$wartość, frequency = 12)
+forecast::tsdisplay(szereg,col=2,lwd=2,las=1)
+```
+
+Na podstawie trzech wykresów: krzywej badanego zjawiska, funkcji autokorelacji ACF oraz funckcji autokorelacji PACF trudno nam powiedzieć o instnieniu trendu, iż funkcja ACF maleję wykładniczo wraz ze wzrostem parametru p.
+
+Również możemy skorzystać z funkcji `forecast::Acf()`:
+```{r}
+forecast::Acf(x = szereg, lag.max = 1, type = "correlation")
+
+forecast::Acf(x = szereg, lag.max = 25, type = "correlation")
+```
+```{r}
+plot(stl(szereg,s.window="periodic"),col=2,lwd=2)
+```
+
+Na podstawie powyższych wykresów można 
+
+Wywnioskować, że nasze dane charakretyzują się sezonowością i pewnym trendem. 
+
+
+## Predykcja
+
+Aby przeprowadzić predykcję potrzebujemy zbudować model, decydujemy się na model Holt'a-winters'a:
+
+```{r}
+model <- HoltWinters(szereg)
+plot(model, lwd = 4, col = 5)
+```
+Czerwona linia - dopasowane wartości, widzimy, że prawie idealnie się pokrywają.
+
+Dokonamy predykcję naszego modelu: 
+```{r}
+predict(model, n.ahead = 50)
+```
+
+Przedstawimy linię trendu: 
+```{r}
+dekompozycja <- decompose(szereg)
+plot(dekompozycja$trend)
+```
+
+
+Spróbujemy dopasowanie wielomianem różnego stopnia.
+
+Na podstawie analizy wyjaśniamy, że najlepsze AIC =  -520.5642 dla wielomianu 15 stopnia.Najlepsze AIC =  401.4457 dla wielomianu 25 stopnia.
+
+```{r}
+mod2 <- lm(szereg~poly(1:length(szereg), 25))
+```
+
+```{r}
+library(ggfortify)
+autoplot(mod2)
+```
+Z wykresów diagnostycznych raczej można się spodziewać jednorodności wariancji, normalności rozkladu reszt, sprawdzimy to za pomocą testów: 
+
+### Sprawdzenie zalożeń: 
+
+```{r, warning = FALSE}
+library(lmtest)
+bptest(mod2)
+gqtest(mod2)
+hmctest(mod2)
+```
+Wszystkie testy wykazały jednorodnośc wariancji. 
+
+```{r}
+dwtest(mod2)
+bgtest(mod2)
+```
+
+p-value jest bardzo niskie => blędy są zależne.
+
+```{r}
+tseries::kpss.test(mod2$residuals)
+tseries::adf.test(mod2$residuals)
+```
+
+## Zbadamy staconarność: 
+
+```{r, warning = FALSE}
+tseries::kpss.test(szereg)
+```
+Po zróżnicowaniu: 
+```{r, warning = FALSE}
+tseries::adf.test(diff(szereg))
+```
+Wniosek: szereg jest stacjonarny.
+
+Z powyższych wyników, decydujemy się ma model 'SARIMA'.
+
+## SARIMA
+
+```{r, warning = FALSE}
+sarima <- forecast::auto.arima(szereg, seasonal = TRUE)
+plot(szereg, col = 5, lwd = 4)
+lines(sarima$fitted, col = 'red', lwd = 1)
+```
+
+```{r}
+forecast::forecast(sarima, h = 12, level = 0.95)
+```
+
+Zbadamy normalność reszt testami: 
+
+```{r, warning = FALSE}
+shapiro.test(sarima$residuals)
+nortest::ad.test(sarima$residuals)
+nortest::lillie.test(sarima$residuals)
+```
+
+Wniosek: reszty mają rozklad normalny. 
+
+```{r}
+t <- 1:108
+bptest(as.numeric(mod2$residuals)~t)
+```
+```{r}
+dwtest(mod2$residuals~t)
+bgtest(mod2$residuals~t, 3)
+```
+Wniosek: Reszty są skorelowane. 
+
+Wniosek: Widzimy, że takie ważne i skomplikowane zjawisko jak stężenie CO2 można dobrze opisać naszym modelem, jest on dostatecznie dobry i skuteczny w celach predykcyjnych. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
